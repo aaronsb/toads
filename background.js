@@ -216,8 +216,8 @@ async function getGeminiQuip(url, model, apiKey, finalPrompt) {
 }
 
 
-// --- Main Logic: Tab Update Listener ---
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+// --- Main Logic: Process Tab Updates ---
+async function processTabUpdate(tabId, changeInfo, tab) {
     const currentFullUrl = tab.url;
     const currentCleanUrl = cleanUrl(currentFullUrl);
     const lastUrl = lastProcessedUrls.get(tabId);
@@ -431,40 +431,36 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
           console.log(`Tab ${tabId}: Status is '${changeInfo.status}' for ${currentFullUrl}. Skipping.`);
      }
 }
+}
+
+// --- Event Listeners ---
+
+// Tab Update Listener
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    await processTabUpdate(tabId, changeInfo, tab);
 });
 
-// Handle content change messages from content script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+// Content Change Listener
+chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     if (message.type === "CONTENT_CHANGED" && sender.tab) {
         console.log(`Content change detected in tab ${sender.tab.id} for URL ${message.url}`);
         
-        // Process the content change similar to tab updates
-        const currentFullUrl = message.url;
-        const currentCleanUrl = cleanUrl(currentFullUrl);
-        const lastUrl = lastProcessedUrls.get(sender.tab.id);
-
-        // Only process if this is a new URL or significant time has passed
+        // Only process if significant time has passed since last update
         const now = Date.now();
         const lastProcessTime = lastProcessedUrls.get(`${sender.tab.id}-time`) || 0;
         const timeSinceLastProcess = now - lastProcessTime;
 
-        // Require at least 30 seconds between content-change triggers for the same URL
         if (timeSinceLastProcess >= 30000) {
             console.log(`Processing content change (${timeSinceLastProcess}ms since last process)`);
             lastProcessedUrls.set(`${sender.tab.id}-time`, now);
             
-            // Trigger the same processing as tab updates
-            chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-                if (tabId === sender.tab.id) {
-                    changeInfo.status = 'complete';
-                    tab.url = currentFullUrl;
-                    return;
-                }
-            });
+            // Process the content change using the same function as tab updates
+            await processTabUpdate(sender.tab.id, { status: 'complete' }, sender.tab);
         } else {
             console.log(`Skipping content change process (only ${timeSinceLastProcess}ms since last process)`);
         }
     }
+    return false;
 });
 
 // Clean up the map when a tab is closed
