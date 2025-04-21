@@ -433,12 +433,47 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 }
 });
 
+// Handle content change messages from content script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === "CONTENT_CHANGED" && sender.tab) {
+        console.log(`Content change detected in tab ${sender.tab.id} for URL ${message.url}`);
+        
+        // Process the content change similar to tab updates
+        const currentFullUrl = message.url;
+        const currentCleanUrl = cleanUrl(currentFullUrl);
+        const lastUrl = lastProcessedUrls.get(sender.tab.id);
+
+        // Only process if this is a new URL or significant time has passed
+        const now = Date.now();
+        const lastProcessTime = lastProcessedUrls.get(`${sender.tab.id}-time`) || 0;
+        const timeSinceLastProcess = now - lastProcessTime;
+
+        // Require at least 30 seconds between content-change triggers for the same URL
+        if (timeSinceLastProcess >= 30000) {
+            console.log(`Processing content change (${timeSinceLastProcess}ms since last process)`);
+            lastProcessedUrls.set(`${sender.tab.id}-time`, now);
+            
+            // Trigger the same processing as tab updates
+            chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+                if (tabId === sender.tab.id) {
+                    changeInfo.status = 'complete';
+                    tab.url = currentFullUrl;
+                    return;
+                }
+            });
+        } else {
+            console.log(`Skipping content change process (only ${timeSinceLastProcess}ms since last process)`);
+        }
+    }
+});
+
 // Clean up the map when a tab is closed
 chrome.tabs.onRemoved.addListener((tabId) => {
-if (lastProcessedUrls.has(tabId)) {
-    lastProcessedUrls.delete(tabId);
-    console.log(`Tab ${tabId} closed, removed from tracking map.`);
-}
+    if (lastProcessedUrls.has(tabId)) {
+        lastProcessedUrls.delete(tabId);
+        lastProcessedUrls.delete(`${tabId}-time`);
+        console.log(`Tab ${tabId} closed, removed from tracking map.`);
+    }
 });
 
 chrome.runtime.onInstalled.addListener(async (details) => {

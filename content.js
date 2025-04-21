@@ -5,8 +5,80 @@ let quipBubble = null;
 let quipText = null;
 let quipCharacter = null;
 let isListenerAdded = false;
+let lastTextContent = "";
+let contentChangeTimeout = null;
 
 const MAX_PAGE_TEXT_LENGTH = 4000;
+const CONTENT_CHANGE_DEBOUNCE = 2000; // Wait 2 seconds after changes before triggering
+const MIN_CONTENT_CHANGE_RATIO = 0.3; // Minimum 30% content difference to trigger
+
+function getTextDifferenceRatio(oldText, newText) {
+    if (!oldText) return 1; // If no previous content, consider it a complete change
+    const longer = oldText.length > newText.length ? oldText : newText;
+    const shorter = oldText.length > newText.length ? newText : oldText;
+    const editDistance = levenshteinDistance(shorter, longer);
+    return editDistance / longer.length;
+}
+
+function levenshteinDistance(str1, str2) {
+    const m = str1.length;
+    const n = str2.length;
+    const dp = Array(m + 1).fill().map(() => Array(n + 1).fill(0));
+
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            if (str1[i - 1] === str2[j - 1]) dp[i][j] = dp[i - 1][j - 1];
+            else dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+        }
+    }
+    return dp[m][n];
+}
+
+// Initialize MutationObserver to detect content changes
+const observer = new MutationObserver((mutations) => {
+    // Clear any pending timeout
+    if (contentChangeTimeout) {
+        clearTimeout(contentChangeTimeout);
+    }
+
+    // Set a new timeout to check content after changes settle
+    contentChangeTimeout = setTimeout(() => {
+        const currentContent = document.body.innerText?.substring(0, MAX_PAGE_TEXT_LENGTH) || "";
+        const changeRatio = getTextDifferenceRatio(lastTextContent, currentContent);
+        
+        console.log(`TOADs: Content change detected (difference ratio: ${(changeRatio * 100).toFixed(1)}%)`);
+
+        // If change is significant enough, notify background script
+        if (changeRatio >= MIN_CONTENT_CHANGE_RATIO) {
+            console.log("TOADs: Significant content change detected, notifying background script");
+            chrome.runtime.sendMessage({ 
+                type: "CONTENT_CHANGED",
+                url: window.location.href
+            });
+            lastTextContent = currentContent;
+        }
+    }, CONTENT_CHANGE_DEBOUNCE);
+});
+
+// Start observing once DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeObserver);
+} else {
+    initializeObserver();
+}
+
+function initializeObserver() {
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true
+    });
+    lastTextContent = document.body.innerText?.substring(0, MAX_PAGE_TEXT_LENGTH) || "";
+    console.log("TOADs: Content observer initialized");
+}
 
 
 function createOrUpdateCharacter(quip, imagePath) {
